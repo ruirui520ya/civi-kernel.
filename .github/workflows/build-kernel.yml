@@ -2,15 +2,6 @@ name: Build mona kernel (KernelSU Next)
 
 on:
   workflow_dispatch:
-    inputs:
-      kernel_branch:
-        description: "MiCode 源码分支"
-        required: true
-        default: "mona-r-oss"
-      defconfig:
-        description: "defconfig 路径（相对 arch/arm64/configs）"
-        required: true
-        default: "vendor/mona_defconfig"
 
 permissions:
   contents: read
@@ -33,38 +24,39 @@ jobs:
             device-tree-compiler clang-12 lld-12 llvm-12 \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
           /usr/lib/llvm-12/bin/clang --version | head -n 2
-          aarch64-linux-gnu-gcc --version | head -n 1
 
       - name: 拉取内核源码
         run: |
-          if ! git clone --depth=1 -b "${{ inputs.kernel_branch }}" \
-               https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel; then
-            echo "::error::分支 ${{ inputs.kernel_branch }} 拉取失败。可用分支："
-            git ls-remote --heads https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git | awk '{print $2}'
-            exit 1
-          fi
+          git clone --depth=1 -b mona-r-oss \
+            https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel
           cd kernel
-          echo "--- mona 相关 defconfig ---"
-          find arch/arm64/configs -iname '*mona*' || true
+          echo "--- mona 配置文件确认 ---"
+          ls -l arch/arm64/configs/vendor/mona_QGKI.config arch/arm64/configs/vendor/mona_GKI.config
 
       - name: 集成 KernelSU Next (legacy)
         run: |
           cd kernel
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
 
-      - name: 写入 KSU 配置
+      - name: 生成内核配置
         run: |
+          set -e
           cd kernel
-          DEF="arch/arm64/configs/${{ inputs.defconfig }}"
-          if [ ! -f "$DEF" ]; then
-            echo "::error::找不到 $DEF，可用："
-            find arch/arm64/configs -name '*defconfig' | head -40
-            exit 1
-          fi
-          for C in CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y CONFIG_KPROBES=y CONFIG_KPROBE_EVENTS=y; do
-            K="${C%%=*}"
-            if grep -q "^${K}=" "$DEF"; then sed -i "s|^${K}=.*|${C}|" "$DEF"; else echo "$C" >> "$DEF"; fi
-          done
+          export PATH=/usr/lib/llvm-12/bin:$PATH
+          M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+          make $M gki_defconfig
+          echo "--- 合并 mona_QGKI.config ---"
+          scripts/kconfig/merge_config.sh -m -O out out/.config arch/arm64/configs/vendor/mona_QGKI.config
+          echo "--- 追加 KSU 配置 ---"
+          cat >> out/.config <<EOF
+          CONFIG_KSU=y
+          CONFIG_KSU_KPROBE_HOOKS=y
+          CONFIG_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          EOF
+          make $M olddefconfig
+          echo "--- KSU 是否生效 ---"
+          grep -E "CONFIG_KSU|CONFIG_KPROBE" out/.config || true
 
       - name: 编译内核
         run: |
@@ -72,7 +64,6 @@ jobs:
           cd kernel
           export PATH=/usr/lib/llvm-12/bin:$PATH
           M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
-          make $M "${{ inputs.defconfig }}"
           make $M -j"$(nproc)"
           ls -lh out/arch/arm64/boot/Image* || true
 
@@ -84,4 +75,5 @@ jobs:
             kernel/out/arch/arm64/boot/Image
             kernel/out/arch/arm64/boot/Image.gz
             kernel/out/System.map
+            kernel/out/.config
           if-no-files-found: warn
