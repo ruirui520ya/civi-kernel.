@@ -29,13 +29,24 @@ jobs:
           git clone --depth=1 -b mona-r-oss \
             https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel
 
-      - name: 修补硬错误（coresight 参数数量）
+      - name: 修补源码缺陷
         run: |
           cd kernel
-          F=drivers/hwtracing/coresight/coresight-byte-cntr.c
-          sed -i 's/usb_qdss_alloc_req(ch, USB_BUF_NUM)/usb_qdss_alloc_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
-          sed -i 's/usb_qdss_free_req(ch)/usb_qdss_free_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
-          grep -n "usb_qdss_" $F || true
+
+          echo "=== 1. coresight: usb_qdss 少传参数 ==="
+          F1=drivers/hwtracing/coresight/coresight-byte-cntr.c
+          sed -i 's/usb_qdss_alloc_req(ch, USB_BUF_NUM)/usb_qdss_alloc_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F1
+          sed -i 's/usb_qdss_free_req(ch)/usb_qdss_free_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F1
+          grep -n "usb_qdss_alloc_req\|usb_qdss_free_req" $F1 || true
+
+          echo "=== 2. qmi.h: 函数重名冲突 ==="
+          F2=drivers/soc/qcom/icnss2/qmi.h
+          echo "--- 修补前 ---"
+          grep -n "wlfw_wlan_mode_send_sync_msg" $F2 || true
+          # 只改以 "int " 开头的非 static 版本，避免影响 static inline 版本
+          sed -i 's/^int wlfw_wlan_mode_send_sync_msg(/int wlfw_wlan_mode_send_sync_msg_v01(/' $F2
+          echo "--- 修补后 ---"
+          grep -n "wlfw_wlan_mode_send_sync_msg" $F2 || true
 
       - name: 集成 KernelSU Next (legacy)
         run: |
@@ -60,14 +71,14 @@ jobs:
           make $M olddefconfig
           grep -E "^CONFIG_KSU|WERROR" out/.config || true
 
-      - name: 编译内核（-k 收集全部错误）
+      - name: 编译内核
         run: |
           cd kernel
           export PATH=/usr/lib/llvm-12/bin:$PATH
           M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
-          W="-Wno-error -Wno-implicit-function-declaration -Wno-incompatible-pointer-types -Wno-enum-conversion -Wno-int-conversion"
+          W="-Wno-error -Wno-implicit-function-declaration -Wno-incompatible-pointer-types -Wno-enum-conversion -Wno-int-conversion -Wno-visibility"
           make $M KCFLAGS="$W" -k -j"$(nproc)"
-          echo "=== 编译结束，检查产物 ==="
+          echo "=== 编译结束 ==="
           ls -lh out/arch/arm64/boot/ 2>/dev/null || true
 
       - name: 检查产物
