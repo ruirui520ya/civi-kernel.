@@ -11,10 +11,6 @@ on:
         description: "defconfig 路径（相对 arch/arm64/configs）"
         required: true
         default: "vendor/mona_defconfig"
-      clang_ver:
-        description: "AOSP prebuilt clang 版本"
-        required: true
-        default: "clang-r383902"
 
 permissions:
   contents: read
@@ -29,11 +25,15 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
           df -h /
 
-      - name: 安装依赖
+      - name: 安装依赖与工具链
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq bc bison build-essential ccache curl flex \
-            libelf-dev libssl-dev liblz4-tool lz4 python3 cpio rsync unzip zip device-tree-compiler
+            libelf-dev libssl-dev liblz4-tool lz4 python3 cpio rsync unzip zip \
+            device-tree-compiler clang-12 lld-12 llvm-12 \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+          /usr/lib/llvm-12/bin/clang --version | head -n 2
+          aarch64-linux-gnu-gcc --version | head -n 1
 
       - name: 拉取内核源码
         run: |
@@ -46,18 +46,6 @@ jobs:
           cd kernel
           echo "--- mona 相关 defconfig ---"
           find arch/arm64/configs -iname '*mona*' || true
-
-      - name: 下载工具链
-        run: |
-          set -e
-          mkdir -p tc && cd tc
-          A=https://android.googlesource.com/platform/prebuilts
-          curl -fL -o clang.tar.gz "$A/clang/host/linux-x86/+archive/refs/heads/master/${{ inputs.clang_ver }}.tar.gz"
-          mkdir -p clang && tar -xzf clang.tar.gz -C clang
-          curl -fL -o gcc64.tar.gz "$A/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/master.tar.gz"
-          mkdir -p gcc64 && tar -xzf gcc64.tar.gz -C gcc64
-          curl -fL -o gcc32.tar.gz "$A/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/heads/master.tar.gz"
-          mkdir -p gcc32 && tar -xzf gcc32.tar.gz -C gcc32
 
       - name: 集成 KernelSU Next (legacy)
         run: |
@@ -82,7 +70,7 @@ jobs:
         run: |
           set -e
           cd kernel
-          export PATH="$PWD/../tc/clang/bin:$PWD/../tc/gcc64/bin:$PWD/../tc/gcc32/bin:$PATH"
+          export PATH=/usr/lib/llvm-12/bin:$PATH
           M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           make $M "${{ inputs.defconfig }}"
           make $M -j"$(nproc)"
