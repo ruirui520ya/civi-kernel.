@@ -23,15 +23,25 @@ jobs:
             libelf-dev libssl-dev liblz4-tool lz4 python3 cpio rsync unzip zip \
             device-tree-compiler clang-12 lld-12 llvm-12 \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
-          /usr/lib/llvm-12/bin/clang --version | head -n 2
 
       - name: 拉取内核源码
         run: |
           git clone --depth=1 -b mona-r-oss \
             https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel
           cd kernel
-          echo "--- mona 配置文件确认 ---"
-          ls -l arch/arm64/configs/vendor/mona_QGKI.config arch/arm64/configs/vendor/mona_GKI.config
+          ls -l arch/arm64/configs/vendor/mona_QGKI.config
+
+      - name: 修补源码兼容性问题
+        run: |
+          cd kernel
+          F=drivers/hwtracing/coresight/coresight-byte-cntr.c
+          echo "--- 修补前 ---"
+          grep -n "usb_qdss_alloc_req\|usb_qdss_free_req" $F || true
+          # 声明是 (ch, n_wr, n_rd) 三参，调用处只传了 (ch, USB_BUF_NUM)
+          sed -i 's/usb_qdss_alloc_req(ch, USB_BUF_NUM)/usb_qdss_alloc_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
+          sed -i 's/usb_qdss_free_req(ch)/usb_qdss_free_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
+          echo "--- 修补后 ---"
+          grep -n "usb_qdss_alloc_req\|usb_qdss_free_req" $F || true
 
       - name: 集成 KernelSU Next (legacy)
         run: |
@@ -45,9 +55,7 @@ jobs:
           export PATH=/usr/lib/llvm-12/bin:$PATH
           M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           make $M gki_defconfig
-          echo "--- 合并 mona_QGKI.config ---"
           scripts/kconfig/merge_config.sh -m -O out out/.config arch/arm64/configs/vendor/mona_QGKI.config
-          echo "--- 追加 KSU 配置 ---"
           cat >> out/.config <<EOF
           CONFIG_KSU=y
           CONFIG_KSU_KPROBE_HOOKS=y
@@ -55,8 +63,7 @@ jobs:
           CONFIG_KPROBE_EVENTS=y
           EOF
           make $M olddefconfig
-          echo "--- KSU 是否生效 ---"
-          grep -E "CONFIG_KSU|CONFIG_KPROBE" out/.config || true
+          grep -E "^CONFIG_KSU|^CONFIG_KPROBE" out/.config || true
 
       - name: 编译内核
         run: |
