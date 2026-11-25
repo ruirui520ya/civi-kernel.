@@ -38,34 +38,33 @@ jobs:
           sed -i 's/usb_qdss_alloc_req(ch, USB_BUF_NUM)/usb_qdss_alloc_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
           sed -i 's/usb_qdss_free_req(ch)/usb_qdss_free_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
 
-          echo "=== 2. fs/namespace.c 补 path_umount（KernelSU 需要）==="
+          echo "=== 2. fs/namespace.c add path_umount for KernelSU ==="
           F3=fs/namespace.c
-          if ! grep -q "int path_umount" $F3; then
-            cat >> $F3 <<'PATCHEOF'
-
-#ifdef CONFIG_KSU
-int path_umount(struct path *path, int flags)
-{
-	struct mount *mnt = real_mount(path->mnt);
-	int ret;
-
-	ret = may_umount(mnt);
-	if (ret)
-		return ret;
-
-	down_write(&namespace_sem);
-	umount_tree(mnt, UMOUNT_SYNC);
-	up_write(&namespace_sem);
-	return 0;
-}
-EXPORT_SYMBOL(path_umount);
-#endif
-PATCHEOF
-            echo "path_umount 已追加"
+          if grep -q "int path_umount" $F3; then
+            echo "path_umount already exists, skip"
           else
-            echo "path_umount 已存在，跳过"
+            printf '%s\n' \
+            '' \
+            '#ifdef CONFIG_KSU' \
+            'int path_umount(struct path *path, int flags)' \
+            '{' \
+            '    struct mount *mnt = real_mount(path->mnt);' \
+            '    int ret;' \
+            '' \
+            '    ret = may_umount(mnt);' \
+            '    if (ret)' \
+            '        return ret;' \
+            '' \
+            '    down_write(&namespace_sem);' \
+            '    umount_tree(mnt, UMOUNT_SYNC);' \
+            '    up_write(&namespace_sem);' \
+            '    return 0;' \
+            '}' \
+            'EXPORT_SYMBOL(path_umount);' \
+            '#endif' >> $F3
+            echo "path_umount appended"
           fi
-          tail -n 25 $F3
+          tail -n 22 $F3
 
       - name: 集成 KernelSU Next (legacy)
         run: |
@@ -81,18 +80,17 @@ PATCHEOF
           M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           make $M gki_defconfig
           scripts/kconfig/merge_config.sh -m -O out out/.config arch/arm64/configs/vendor/mona_QGKI.config
-          cat >> out/.config <<'EOF'
-          CONFIG_KSU=y
-          CONFIG_KSU_KPROBE_HOOKS=y
-          CONFIG_KPROBES=y
-          CONFIG_KPROBE_EVENTS=y
-          CONFIG_ICNSS2_QMI=y
-          CONFIG_QCOM_SMEM=y
-          # CONFIG_QTI_TZ_LOG is not set
-          # CONFIG_WERROR is not set
-          EOF
+          printf '%s\n' \
+          'CONFIG_KSU=y' \
+          'CONFIG_KSU_KPROBE_HOOKS=y' \
+          'CONFIG_KPROBES=y' \
+          'CONFIG_KPROBE_EVENTS=y' \
+          'CONFIG_ICNSS2_QMI=y' \
+          'CONFIG_QCOM_SMEM=y' \
+          '# CONFIG_QTI_TZ_LOG is not set' \
+          '# CONFIG_WERROR is not set' >> out/.config
           make $M olddefconfig
-          echo "--- 关键配置确认 ---"
+          echo "--- config check ---"
           grep -E "^CONFIG_KSU|^CONFIG_ICNSS2|^CONFIG_QCOM_SMEM|QTI_TZ_LOG|WERROR" out/.config || true
 
       - name: 编译内核镜像（只编 Image）
@@ -102,7 +100,7 @@ PATCHEOF
           M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           W="-Wno-error -Wno-implicit-function-declaration -Wno-incompatible-pointer-types -Wno-enum-conversion -Wno-int-conversion -Wno-visibility"
           make $M KCFLAGS="$W" -j"$(nproc)" Image
-          echo "=== 编译结束 ==="
+          echo "=== build finished ==="
           ls -lh out/arch/arm64/boot/ 2>/dev/null || true
 
       - name: 检查产物
