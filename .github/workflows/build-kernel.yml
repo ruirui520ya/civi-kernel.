@@ -93,8 +93,6 @@ jobs:
           'CONFIG_KSU=y' \
           'CONFIG_KSU_KPROBE_HOOKS=y' >> out/.config
           make $M olddefconfig
-          echo "=== 版本号 ==="
-          cat out/include/generated/utsrelease.h
           echo "=== 关键配置 ==="
           grep -E "^CONFIG_KSU|^CONFIG_MODVERSIONS|^CONFIG_PREEMPT=|^CONFIG_MODULE_UNLOAD|^CONFIG_LOCALVERSION" out/.config || true
 
@@ -107,7 +105,7 @@ jobs:
           make $M KCFLAGS="$W" -j"$(nproc)" Image
           echo "=== build finished ==="
           ls -lh out/arch/arm64/boot/ 2>/dev/null || true
-          cat out/include/generated/utsrelease.h
+          cat out/include/generated/utsrelease.h 2>/dev/null || true
 
       - name: 检查产物
         run: |
@@ -115,7 +113,7 @@ jobs:
             echo "IMAGE OK"
             ls -lh kernel/out/arch/arm64/boot/Image*
             echo "--- utsrelease ---"
-            cat kernel/out/include/generated/utsrelease.h
+            cat kernel/out/include/generated/utsrelease.h 2>/dev/null || true
           else
             echo "::error::Image 未生成，编译失败"
             exit 1
