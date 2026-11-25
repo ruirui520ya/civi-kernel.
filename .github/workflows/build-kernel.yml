@@ -65,7 +65,17 @@ jobs:
             echo "appended"
           fi
 
-          echo "=== 3. 锁定内核版本号 ==="
+          echo "=== 3. qrtr_first_msg 定义缺失 ==="
+          F4=net/qrtr/qrtr.c
+          if grep -q "^int qrtr_first_msg" $F4; then
+            echo "already defined"
+          else
+            printf '%s\n' '' '#ifdef CONFIG_DEBUG_POWER_MI' 'int qrtr_first_msg = 1;' '#endif' >> $F4
+            echo "appended"
+            tail -n 6 $F4
+          fi
+
+          echo "=== 4. 锁定内核版本号 ==="
           printf '#!/bin/sh\nexit 0\n' > scripts/setlocalversion
           chmod +x scripts/setlocalversion
           cat scripts/setlocalversion
