@@ -28,6 +28,7 @@ jobs:
         run: |
           git clone --depth=1 -b mona-r-oss \
             https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel
+          ls -l stock-config.gz || echo "stock-config.gz missing"
 
       - name: 修补源码
         run: |
@@ -38,10 +39,10 @@ jobs:
           sed -i 's/usb_qdss_alloc_req(ch, USB_BUF_NUM)/usb_qdss_alloc_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
           sed -i 's/usb_qdss_free_req(ch)/usb_qdss_free_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
 
-          echo "=== 2. fs/namespace.c add path_umount for KernelSU ==="
+          echo "=== 2. path_umount for KernelSU ==="
           F3=fs/namespace.c
           if grep -q "int path_umount" $F3; then
-            echo "path_umount already exists, skip"
+            echo "already exists"
           else
             printf '%s\n' \
             '' \
@@ -62,36 +63,38 @@ jobs:
             '}' \
             'EXPORT_SYMBOL(path_umount);' \
             '#endif' >> $F3
-            echo "path_umount appended"
+            echo "appended"
           fi
-          tail -n 22 $F3
+
+          echo "=== 3. 锁定内核版本号 ==="
+          printf '#!/bin/sh\nexit 0\n' > scripts/setlocalversion
+          chmod +x scripts/setlocalversion
+          cat scripts/setlocalversion
 
       - name: 集成 KernelSU Next (legacy)
         run: |
           cd kernel
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/legacy/kernel/setup.sh" | bash -s legacy
-          ls -l drivers/kernelsu || true
+          ls -l drivers/kernelsu
 
-      - name: 生成内核配置
+      - name: 用原厂配置生成 .config
         run: |
           set -e
           cd kernel
           export PATH=/usr/lib/llvm-12/bin:$PATH
           M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
-          make $M gki_defconfig
-          scripts/kconfig/merge_config.sh -m -O out out/.config arch/arm64/configs/vendor/mona_QGKI.config
+          mkdir -p out
+          gunzip -c ../stock-config.gz > out/.config
+          sed -i 's|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION="-qgki-gd07a1351a4ad"|' out/.config
+          sed -i 's|^CONFIG_LOCALVERSION_AUTO=.*|CONFIG_LOCALVERSION_AUTO=n|' out/.config
           printf '%s\n' \
           'CONFIG_KSU=y' \
-          'CONFIG_KSU_KPROBE_HOOKS=y' \
-          'CONFIG_KPROBES=y' \
-          'CONFIG_KPROBE_EVENTS=y' \
-          'CONFIG_ICNSS2_QMI=y' \
-          'CONFIG_QCOM_SMEM=y' \
-          '# CONFIG_QTI_TZ_LOG is not set' \
-          '# CONFIG_WERROR is not set' >> out/.config
+          'CONFIG_KSU_KPROBE_HOOKS=y' >> out/.config
           make $M olddefconfig
-          echo "--- config check ---"
-          grep -E "^CONFIG_KSU|^CONFIG_ICNSS2|^CONFIG_QCOM_SMEM|QTI_TZ_LOG|WERROR" out/.config || true
+          echo "=== 版本号 ==="
+          cat out/include/generated/utsrelease.h
+          echo "=== 关键配置 ==="
+          grep -E "^CONFIG_KSU|^CONFIG_MODVERSIONS|^CONFIG_PREEMPT=|^CONFIG_MODULE_UNLOAD|^CONFIG_LOCALVERSION" out/.config || true
 
       - name: 编译内核镜像（只编 Image）
         run: |
@@ -102,12 +105,15 @@ jobs:
           make $M KCFLAGS="$W" -j"$(nproc)" Image
           echo "=== build finished ==="
           ls -lh out/arch/arm64/boot/ 2>/dev/null || true
+          cat out/include/generated/utsrelease.h
 
       - name: 检查产物
         run: |
           if [ -f kernel/out/arch/arm64/boot/Image ]; then
             echo "IMAGE OK"
             ls -lh kernel/out/arch/arm64/boot/Image*
+            echo "--- utsrelease ---"
+            cat kernel/out/include/generated/utsrelease.h
           else
             echo "::error::Image 未生成，编译失败"
             exit 1
