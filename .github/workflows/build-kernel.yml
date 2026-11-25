@@ -76,6 +76,8 @@ jobs:
           fi
 
           echo "=== 4. 锁定内核版本号 ==="
+          sed -i 's/^EXTRAVERSION =.*/EXTRAVERSION = -qgki-gd07a1351a4ad/' Makefile
+          grep -n '^EXTRAVERSION' Makefile
           printf '#!/bin/sh\nexit 0\n' > scripts/setlocalversion
           chmod +x scripts/setlocalversion
           cat scripts/setlocalversion
