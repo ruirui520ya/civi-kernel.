@@ -29,13 +29,12 @@ jobs:
           git clone --depth=1 -b mona-r-oss \
             https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel
 
-      - name: 修补唯一的硬错误（coresight 参数数量）
+      - name: 修补硬错误（coresight 参数数量）
         run: |
           cd kernel
           F=drivers/hwtracing/coresight/coresight-byte-cntr.c
           sed -i 's/usb_qdss_alloc_req(ch, USB_BUF_NUM)/usb_qdss_alloc_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
           sed -i 's/usb_qdss_free_req(ch)/usb_qdss_free_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
-          grep -n "usb_qdss_" $F || true
 
       - name: 集成 KernelSU Next (legacy)
         run: |
@@ -56,11 +55,13 @@ jobs:
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
           CONFIG_ICNSS2_QMI=y
+          CONFIG_QCOM_SMEM=y
+          # CONFIG_QTI_TZ_LOG is not set
           # CONFIG_WERROR is not set
           EOF
           make $M olddefconfig
           echo "--- 关键配置确认 ---"
-          grep -E "^CONFIG_KSU|^CONFIG_ICNSS2|WERROR" out/.config || true
+          grep -E "^CONFIG_KSU|^CONFIG_ICNSS2|^CONFIG_QCOM_SMEM|QTI_TZ_LOG|WERROR" out/.config || true
 
       - name: 编译内核
         run: |
