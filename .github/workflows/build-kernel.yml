@@ -36,10 +36,7 @@ jobs:
       - name: 修补源码
         run: |
           cd kernel
-          echo "=== 1. coresight 参数数量 ==="
-          F=drivers/hwtracing/coresight/coresight-byte-cntr.c
-          sed -i 's/usb_qdss_alloc_req(ch, USB_BUF_NUM)/usb_qdss_alloc_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
-          sed -i 's/usb_qdss_free_req(ch)/usb_qdss_free_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
+          echo "=== 1. coresight 补丁已撤销（原厂配置下该函数是两参数）==="
 
           echo "=== 2. path_umount for KernelSU ==="
           F3=fs/namespace.c
