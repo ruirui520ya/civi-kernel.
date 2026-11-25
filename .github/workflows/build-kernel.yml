@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 350
     steps:
+      - name: 检出本仓库（获取 stock-config.gz）
+        uses: actions/checkout@v4
+
       - name: 释放磁盘
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
@@ -28,12 +31,11 @@ jobs:
         run: |
           git clone --depth=1 -b mona-r-oss \
             https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel
-          ls -l stock-config.gz || echo "stock-config.gz missing"
+          ls -l stock-config.gz
 
       - name: 修补源码
         run: |
           cd kernel
-
           echo "=== 1. coresight 参数数量 ==="
           F=drivers/hwtracing/coresight/coresight-byte-cntr.c
           sed -i 's/usb_qdss_alloc_req(ch, USB_BUF_NUM)/usb_qdss_alloc_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
