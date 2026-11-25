@@ -29,17 +29,49 @@ jobs:
           git clone --depth=1 -b mona-r-oss \
             https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel
 
-      - name: 修补硬错误（coresight 参数数量）
+      - name: 修补源码
         run: |
           cd kernel
+
+          echo "=== 1. coresight 参数数量 ==="
           F=drivers/hwtracing/coresight/coresight-byte-cntr.c
           sed -i 's/usb_qdss_alloc_req(ch, USB_BUF_NUM)/usb_qdss_alloc_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
           sed -i 's/usb_qdss_free_req(ch)/usb_qdss_free_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
 
+          echo "=== 2. fs/namespace.c 补 path_umount（KernelSU 需要）==="
+          F3=fs/namespace.c
+          if ! grep -q "int path_umount" $F3; then
+            cat >> $F3 <<'PATCHEOF'
+
+#ifdef CONFIG_KSU
+int path_umount(struct path *path, int flags)
+{
+	struct mount *mnt = real_mount(path->mnt);
+	int ret;
+
+	ret = may_umount(mnt);
+	if (ret)
+		return ret;
+
+	down_write(&namespace_sem);
+	umount_tree(mnt, UMOUNT_SYNC);
+	up_write(&namespace_sem);
+	return 0;
+}
+EXPORT_SYMBOL(path_umount);
+#endif
+PATCHEOF
+            echo "path_umount 已追加"
+          else
+            echo "path_umount 已存在，跳过"
+          fi
+          tail -n 25 $F3
+
       - name: 集成 KernelSU Next (legacy)
         run: |
           cd kernel
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/legacy/kernel/setup.sh" | bash -s legacy
+          ls -l drivers/kernelsu || true
 
       - name: 生成内核配置
         run: |
@@ -56,13 +88,14 @@ jobs:
           CONFIG_KPROBE_EVENTS=y
           CONFIG_ICNSS2_QMI=y
           CONFIG_QCOM_SMEM=y
+          # CONFIG_QTI_TZ_LOG is not set
           # CONFIG_WERROR is not set
           EOF
           make $M olddefconfig
           echo "--- 关键配置确认 ---"
-          grep -E "^CONFIG_KSU|^CONFIG_ICNSS2|^CONFIG_QCOM_SMEM|WERROR" out/.config || true
+          grep -E "^CONFIG_KSU|^CONFIG_ICNSS2|^CONFIG_QCOM_SMEM|QTI_TZ_LOG|WERROR" out/.config || true
 
-      - name: 编译内核镜像（只编 Image，跳过模块）
+      - name: 编译内核镜像（只编 Image）
         run: |
           cd kernel
           export PATH=/usr/lib/llvm-12/bin:$PATH
