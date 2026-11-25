@@ -91,7 +91,7 @@ jobs:
           set -e
           cd kernel
           export PATH=/usr/lib/llvm-12/bin:$PATH
-          M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+          M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LOCALVERSION=-qgki-gd07a1351a4ad"
           mkdir -p out
           gunzip -c ../stock-config.gz > out/.config
           sed -i 's|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION="-qgki-gd07a1351a4ad"|' out/.config
@@ -105,12 +105,17 @@ jobs:
           grep -E "^CONFIG_KSU|^CONFIG_MODVERSIONS|^CONFIG_PREEMPT=|^CONFIG_MODULE_UNLOAD|^CONFIG_LOCALVERSION" out/.config || true
           echo "=== QRTR ==="
           grep -E "^CONFIG_QRTR|^CONFIG_RPMSG" out/.config || true
+          echo "=== 早期校验版本号 ==="
+          make $M prepare
+          cat out/include/generated/utsrelease.h
+          grep -q '5.4.86-qgki-gd07a1351a4ad' out/include/generated/utsrelease.h || { echo "::error::内核版本号不正确，无法匹配原厂模块"; exit 1; }
+          echo "版本号 OK"
 
       - name: 编译内核镜像（只编 Image）
         run: |
           cd kernel
           export PATH=/usr/lib/llvm-12/bin:$PATH
-          M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+          M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LOCALVERSION=-qgki-gd07a1351a4ad"
           W="-Wno-error -Wno-implicit-function-declaration -Wno-incompatible-pointer-types -Wno-enum-conversion -Wno-int-conversion -Wno-visibility"
           make $M KCFLAGS="$W" -j"$(nproc)" Image
           echo "=== build finished ==="
