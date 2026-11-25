@@ -56,20 +56,19 @@ jobs:
           CONFIG_KPROBE_EVENTS=y
           CONFIG_ICNSS2_QMI=y
           CONFIG_QCOM_SMEM=y
-          # CONFIG_QTI_TZ_LOG is not set
           # CONFIG_WERROR is not set
           EOF
           make $M olddefconfig
           echo "--- 关键配置确认 ---"
-          grep -E "^CONFIG_KSU|^CONFIG_ICNSS2|^CONFIG_QCOM_SMEM|QTI_TZ_LOG|WERROR" out/.config || true
+          grep -E "^CONFIG_KSU|^CONFIG_ICNSS2|^CONFIG_QCOM_SMEM|WERROR" out/.config || true
 
-      - name: 编译内核
+      - name: 编译内核镜像（只编 Image，跳过模块）
         run: |
           cd kernel
           export PATH=/usr/lib/llvm-12/bin:$PATH
           M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           W="-Wno-error -Wno-implicit-function-declaration -Wno-incompatible-pointer-types -Wno-enum-conversion -Wno-int-conversion -Wno-visibility"
-          make $M KCFLAGS="$W" -k -j"$(nproc)"
+          make $M KCFLAGS="$W" -j"$(nproc)" Image
           echo "=== 编译结束 ==="
           ls -lh out/arch/arm64/boot/ 2>/dev/null || true
 
