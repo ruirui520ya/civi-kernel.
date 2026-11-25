@@ -29,24 +29,13 @@ jobs:
           git clone --depth=1 -b mona-r-oss \
             https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel
 
-      - name: 修补源码缺陷
+      - name: 修补唯一的硬错误（coresight 参数数量）
         run: |
           cd kernel
-
-          echo "=== 1. coresight: usb_qdss 少传参数 ==="
-          F1=drivers/hwtracing/coresight/coresight-byte-cntr.c
-          sed -i 's/usb_qdss_alloc_req(ch, USB_BUF_NUM)/usb_qdss_alloc_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F1
-          sed -i 's/usb_qdss_free_req(ch)/usb_qdss_free_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F1
-          grep -n "usb_qdss_alloc_req\|usb_qdss_free_req" $F1 || true
-
-          echo "=== 2. qmi.h: 函数重名冲突 ==="
-          F2=drivers/soc/qcom/icnss2/qmi.h
-          echo "--- 修补前 ---"
-          grep -n "wlfw_wlan_mode_send_sync_msg" $F2 || true
-          # 只改以 "int " 开头的非 static 版本，避免影响 static inline 版本
-          sed -i 's/^int wlfw_wlan_mode_send_sync_msg(/int wlfw_wlan_mode_send_sync_msg_v01(/' $F2
-          echo "--- 修补后 ---"
-          grep -n "wlfw_wlan_mode_send_sync_msg" $F2 || true
+          F=drivers/hwtracing/coresight/coresight-byte-cntr.c
+          sed -i 's/usb_qdss_alloc_req(ch, USB_BUF_NUM)/usb_qdss_alloc_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
+          sed -i 's/usb_qdss_free_req(ch)/usb_qdss_free_req(ch, USB_BUF_NUM, USB_BUF_NUM)/g' $F
+          grep -n "usb_qdss_" $F || true
 
       - name: 集成 KernelSU Next (legacy)
         run: |
@@ -66,10 +55,12 @@ jobs:
           CONFIG_KSU_KPROBE_HOOKS=y
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
+          CONFIG_ICNSS2_QMI=y
           # CONFIG_WERROR is not set
           EOF
           make $M olddefconfig
-          grep -E "^CONFIG_KSU|WERROR" out/.config || true
+          echo "--- 关键配置确认 ---"
+          grep -E "^CONFIG_KSU|^CONFIG_ICNSS2|WERROR" out/.config || true
 
       - name: 编译内核
         run: |
