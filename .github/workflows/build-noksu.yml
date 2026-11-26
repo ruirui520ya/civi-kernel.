@@ -1,0 +1,141 @@
+name: Build mona kernel (NO KernelSU)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    steps:
+      - name: 检出本仓库（获取 stock-config.gz）
+        uses: actions/checkout@v4
+
+      - name: 释放磁盘
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: 安装依赖与工具链
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bc bison build-essential ccache curl flex \
+            libelf-dev libssl-dev liblz4-tool lz4 python3 cpio rsync unzip zip \
+            device-tree-compiler clang-12 lld-12 llvm-12 \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+
+      - name: 拉取内核源码
+        run: |
+          git clone --depth=1 -b mona-r-oss \
+            https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel
+          ls -l stock-config.gz
+
+      - name: 修补源码
+        run: |
+          cd kernel
+          echo "=== 1. coresight 补丁已撤销（原厂配置下该函数是两参数）==="
+
+          echo "=== 2. path_umount for KernelSU ==="
+          F3=fs/namespace.c
+          if grep -q "int path_umount" $F3; then
+            echo "already exists"
+          else
+            printf '%s\n' \
+            '' \
+            '#ifdef CONFIG_KSU' \
+            'int path_umount(struct path *path, int flags)' \
+            '{' \
+            '    struct mount *mnt = real_mount(path->mnt);' \
+            '    int ret;' \
+            '' \
+            '    ret = may_umount(mnt);' \
+            '    if (ret)' \
+            '        return ret;' \
+            '' \
+            '    down_write(&namespace_sem);' \
+            '    umount_tree(mnt, UMOUNT_SYNC);' \
+            '    up_write(&namespace_sem);' \
+            '    return 0;' \
+            '}' \
+            'EXPORT_SYMBOL(path_umount);' \
+            '#endif' >> $F3
+            echo "appended"
+          fi
+
+          echo "=== 3. qrtr_first_msg 定义缺失 ==="
+          F4=net/qrtr/qrtr.c
+          if grep -q "^int qrtr_first_msg" $F4; then
+            echo "already defined"
+          else
+            printf '%s\n' '' '#ifdef CONFIG_DEBUG_POWER_MI' 'int qrtr_first_msg = 1;' '#endif' >> $F4
+            echo "appended"
+            tail -n 6 $F4
+          fi
+
+          echo "=== 4. 锁定内核版本号 ==="
+          sed -i 's/^EXTRAVERSION =.*/EXTRAVERSION = -qgki-gd07a1351a4ad/' Makefile
+          grep -n '^EXTRAVERSION' Makefile
+          printf '#!/bin/sh\nexit 0\n' > scripts/setlocalversion
+          chmod +x scripts/setlocalversion
+          cat scripts/setlocalversion
+
+
+      - name: 用原厂配置生成 .config
+        run: |
+          set -e
+          cd kernel
+          export PATH=/usr/lib/llvm-12/bin:$PATH
+          M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LOCALVERSION=-qgki-gd07a1351a4ad"
+          mkdir -p out
+          gunzip -c ../stock-config.gz > out/.config
+          sed -i 's|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION="-qgki-gd07a1351a4ad"|' out/.config
+          sed -i 's|^CONFIG_LOCALVERSION_AUTO=.*|CONFIG_LOCALVERSION_AUTO=n|' out/.config
+          printf '%s\n' 'CONFIG_QRTR_SMD=y' >> out/.config
+
+          make $M olddefconfig
+          echo "=== 关键配置 ==="
+          grep -E "^CONFIG_KSU|^CONFIG_MODVERSIONS|^CONFIG_PREEMPT=|^CONFIG_MODULE_UNLOAD|^CONFIG_LOCALVERSION" out/.config || true
+          echo "=== QRTR ==="
+          grep -E "^CONFIG_QRTR|^CONFIG_RPMSG" out/.config || true
+          echo "=== 早期校验版本号 ==="
+          make $M prepare
+          cat out/include/generated/utsrelease.h
+          grep -q '5.4.86-qgki-gd07a1351a4ad' out/include/generated/utsrelease.h || { echo "::error::内核版本号不正确，无法匹配原厂模块"; exit 1; }
+          echo "版本号 OK"
+
+      - name: 编译内核镜像（只编 Image）
+        run: |
+          cd kernel
+          export PATH=/usr/lib/llvm-12/bin:$PATH
+          M="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LOCALVERSION=-qgki-gd07a1351a4ad"
+          W="-Wno-error -Wno-implicit-function-declaration -Wno-incompatible-pointer-types -Wno-enum-conversion -Wno-int-conversion -Wno-visibility"
+          make $M KCFLAGS="$W" -j"$(nproc)" Image
+          echo "=== build finished ==="
+          ls -lh out/arch/arm64/boot/ 2>/dev/null || true
+          cat out/include/generated/utsrelease.h 2>/dev/null || true
+
+      - name: 检查产物
+        run: |
+          if [ -f kernel/out/arch/arm64/boot/Image ]; then
+            echo "IMAGE OK"
+            ls -lh kernel/out/arch/arm64/boot/Image*
+            echo "--- utsrelease ---"
+            cat kernel/out/include/generated/utsrelease.h 2>/dev/null || true
+          else
+            echo "::error::Image 未生成，编译失败"
+            exit 1
+          fi
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: mona-kernel-noksu
+          path: |
+            kernel/out/arch/arm64/boot/Image
+            kernel/out/arch/arm64/boot/Image.gz
+            kernel/out/System.map
+            kernel/out/.config
+          if-no-files-found: warn
