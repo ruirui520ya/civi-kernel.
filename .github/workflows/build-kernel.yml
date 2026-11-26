@@ -2,6 +2,11 @@ name: Build mona kernel (KernelSU Next)
 
 on:
   workflow_dispatch:
+    inputs:
+      enable_ksu:
+        description: "integrate KernelSU"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -83,6 +88,7 @@ jobs:
           cat scripts/setlocalversion
 
       - name: 集成 KernelSU Next (legacy)
+        if: ${{ inputs.enable_ksu }}
         run: |
           cd kernel
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/legacy/kernel/setup.sh" | bash -s legacy
@@ -98,10 +104,10 @@ jobs:
           gunzip -c ../stock-config.gz > out/.config
           sed -i 's|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION="-qgki-gd07a1351a4ad"|' out/.config
           sed -i 's|^CONFIG_LOCALVERSION_AUTO=.*|CONFIG_LOCALVERSION_AUTO=n|' out/.config
-          printf '%s\n' \
-          'CONFIG_KSU=y' \
-          'CONFIG_KSU_KPROBE_HOOKS=y' \
-          'CONFIG_QRTR_SMD=y' >> out/.config
+          printf '%s\n' 'CONFIG_QRTR_SMD=y' >> out/.config
+          if [ "${{ inputs.enable_ksu }}" = "true" ]; then
+            printf '%s\n' 'CONFIG_KSU=y' 'CONFIG_KSU_KPROBE_HOOKS=y' >> out/.config
+          fi
           make $M olddefconfig
           echo "=== 关键配置 ==="
           grep -E "^CONFIG_KSU|^CONFIG_MODVERSIONS|^CONFIG_PREEMPT=|^CONFIG_MODULE_UNLOAD|^CONFIG_LOCALVERSION" out/.config || true
@@ -139,7 +145,7 @@ jobs:
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: mona-kernel-image
+          name: mona-kernel-${{ inputs.enable_ksu && 'ksu' || 'noksu' }}
           path: |
             kernel/out/arch/arm64/boot/Image
             kernel/out/arch/arm64/boot/Image.gz
